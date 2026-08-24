@@ -7,8 +7,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Poller is registered as an epoll/kqueue object in OS.
-// This epoll/kqueue object will register all client sockets and wait for incoming request data
+// Poller wraps an OS-level epoll/kqueue instance.
+// It registers client socket fds with the kernel and calls epoll_wait/kevent
+// to block until the kernel signals that data is available on any registered fd.
 type Poller struct {
 	// or epoll Id
 	kqueueId int
@@ -27,6 +28,9 @@ func NewPoller() (*Poller, error) {
 func (p *Poller) Run() {
 	inboundEvents := make([]unix.Kevent_t, 100)
 	for {
+		// epoll_wait/kevent - it's a syscall to wait for incoming event
+		// At this time epoll/kqueue OS object is asleep.
+		// It will wake up when already registered client socket will send data for reading
 		n, err := unix.Kevent(p.kqueueId, nil, inboundEvents, nil)
 
 		if err != nil {
@@ -41,7 +45,7 @@ func (p *Poller) Run() {
 	}
 }
 
-func (p *Poller) Register(conn net.TCPConn) error {
+func (p *Poller) Register(conn *net.TCPConn) error {
 	file, err := conn.File()
 	if err != nil {
 		return err
@@ -62,6 +66,7 @@ func (p *Poller) Register(conn net.TCPConn) error {
 		},
 	}
 
+	// kevent/epoll_ctl - we register client socket fd in epoll/kqueue object (it doesn't mean that we create again client socket)
 	_, err = unix.Kevent(p.kqueueId, events, nil, nil)
 
 	return err
