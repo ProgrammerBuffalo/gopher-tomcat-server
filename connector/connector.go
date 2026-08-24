@@ -26,6 +26,8 @@ func (c *Connector) Start() error {
 	// established connection into the listening socket's accept queue.
 	// The listening socket remains the same; accept() later removes one
 	// pending connection from this queue and returns a new socket for it.
+
+	// Here we create a kernel object as **socket object**
 	listener, err := net.Listen("tcp", ":8080")
 
 	if err != nil {

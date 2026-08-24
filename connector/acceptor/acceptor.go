@@ -26,11 +26,17 @@ func (a *Acceptor) Run() {
 
 		// If no connection is ready, the goroutine is parked (_GWaiting) while waiting for I/O.
 		// The Go netpoller waits for events using epoll_wait() on Linux.
-		// epoll_wait() blocks in the kernel until an event occurs on a registered fd (server file descriptor)
-		// When the listening socket (server socket) becomes ready (means that for server socket we have ready client socket),
-		// epoll_wait() returns the event.
+		// epoll_wait() blocks in the kernel until an event occurs on a registered fd.
+		// When the listening socket becomes ready, it means that the accept-queue
+		// contains an established TCP connection that can be retrieved with accept().
+		// epoll_wait() returns the event for the listening fd.
 		// The Go runtime then marks the waiting goroutine as runnable (_GRunnable).
 		// The Go scheduler will eventually execute the goroutine.
+		// The goroutine resumes execution and listener.Accept() performs
+		// the accept() system call on the listening fd.
+		// accept() removes one established connection from the accept-queue
+		// and returns a new file descriptor for that client connection.
+		// This new fd is used for read/write operations with the client.
 		_, err := a.listener.Accept()
 
 		if err != nil {
