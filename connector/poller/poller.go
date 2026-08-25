@@ -51,13 +51,32 @@ func (p *Poller) Run() {
 				fmt.Println("Poller stopped (kqueue closed)")
 				return
 			}
+
 			fmt.Println("ERROR: ", err)
 			continue
 		}
 
 		for i := 0; i < n; i++ {
 			fmt.Printf("Client socket %d is ready for read\n", inboundEvents[i].Ident)
-			//TODO: send to worker pool
+
+			// By flags and & with EV_EOF we can check do we have in the event's flag the bit of client disconnection == EV_EOF
+			// When a client disconnects it sends special TCP package - FIN (Finish).
+			// By this OS marks for our epoll/kqueue object that in this client socket (fd) occurred a disconnection event
+
+			// EV_ERROR - can be occurred when the client's program was unexpectedly closed
+			// When in a client's program occurred a critical error, the client's OS sends a special TCP package-RST (Reset)
+			if (inboundEvents[i].Flags & (unix.EV_EOF | unix.EV_ERROR)) != 0 {
+				fmt.Printf("Client socket id: %d is disconnected", inboundEvents[i].Ident)
+
+				// We need to send syscall to OS for close release resources of socket from OS
+				// If we don't call this, the socket will remain in the CLOSE_WAIT state indefinitely, causing a resource leak until the app shuts down.
+				err = unix.Close(int(inboundEvents[i].Ident))
+				if err != nil {
+					fmt.Println("Closing client socket error: ", err)
+				}
+
+				continue
+			}
 		}
 	}
 }
