@@ -3,6 +3,7 @@ package acceptor
 import (
 	"errors"
 	"fmt"
+	"gopher-tomcat-server/connector/poller"
 	"net"
 	"sync"
 )
@@ -10,12 +11,13 @@ import (
 // Acceptor is used for get client sockets from OS
 type Acceptor struct {
 	listener net.Listener
+	plr      *poller.Poller
 
 	wg *sync.WaitGroup
 }
 
-func Initialize(listener net.Listener, wg *sync.WaitGroup) Acceptor {
-	return Acceptor{listener: listener, wg: wg}
+func NewAcceptor(listener net.Listener, p *poller.Poller, wg *sync.WaitGroup) Acceptor {
+	return Acceptor{listener: listener, plr: p, wg: wg}
 }
 
 func (a *Acceptor) Run() {
@@ -37,7 +39,8 @@ func (a *Acceptor) Run() {
 		// accept() removes one established connection from the accept-queue
 		// and returns a new file descriptor for that client connection.
 		// This new fd is used for read/write operations with the client.
-		_, err := a.listener.Accept()
+
+		conn, err := a.listener.Accept()
 
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
@@ -49,13 +52,40 @@ func (a *Acceptor) Run() {
 		}
 
 		fmt.Println("Acceptor got new client socket")
+
+		// Here we are using type assertion, is it a real tcp socket
+		tcpConn, ok := conn.(*net.TCPConn)
+		if !ok {
+			fmt.Println("ERROR: Unexpected connection: ", err)
+			err = tcpConn.Close()
+			if err != nil {
+				return
+			}
+			continue
+		}
+
+		// Register in poller for waiting client's data
+		err = a.plr.Register(tcpConn)
+		if err != nil {
+			fmt.Println("ERROR: registering in poller: ", err)
+			err = tcpConn.Close()
+			if err != nil {
+				return
+			}
+			continue
+		}
+
 	}
 }
 
 func (a *Acceptor) Close() error {
+	if err := a.plr.Close(); err != nil {
+		return err
+	}
 	if err := a.listener.Close(); err != nil {
 		return err
 	}
+
 	fmt.Println("Acceptor closed...")
 	return nil
 }
