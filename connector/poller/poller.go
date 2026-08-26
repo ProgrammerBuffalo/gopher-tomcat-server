@@ -3,6 +3,7 @@ package poller
 import (
 	"errors"
 	"fmt"
+	"gopher-tomcat-server/connector/executor"
 	"net"
 
 	"golang.org/x/sys/unix"
@@ -14,6 +15,8 @@ import (
 type Poller struct {
 	// or epoll Id
 	kqueueId int
+
+	workerPool *executor.WorkerPool
 }
 
 func NewPoller() (*Poller, error) {
@@ -24,6 +27,10 @@ func NewPoller() (*Poller, error) {
 	}
 
 	p := &Poller{kqueueId: fd}
+
+	wp := executor.NewWorkerPool(3, p.Rearm)
+	p.workerPool = wp
+
 	go p.Run()
 
 	return p, nil
@@ -77,7 +84,24 @@ func (p *Poller) Run() {
 
 				continue
 			}
+
+			p.workerPool.AddSocketTask(int(inboundEvents[i].Ident))
 		}
+	}
+}
+
+// Rearm Once our worker is done reading, it manually re-enables (re-arms) the event in the OS
+func (p *Poller) Rearm(socketId int) {
+	fmt.Printf("Rearm client socket reading with ID: %d\n", socketId)
+	events := []unix.Kevent_t{{
+		Ident:  uint64(socketId),
+		Filter: unix.EVFILT_READ,
+		Flags:  unix.EV_ENABLE | unix.EV_CLEAR | unix.EV_ONESHOT,
+	}}
+	// re-enable the client socket for the next reading
+	_, err := unix.Kevent(p.kqueueId, events, nil, nil)
+	if err != nil {
+		fmt.Println("ERROR while rearm", err)
 	}
 }
 
@@ -100,7 +124,11 @@ func (p *Poller) Register(conn *net.TCPConn) error {
 				// It means that by which event OS should notify an epoll object
 				Filter: unix.EVFILT_READ,
 				// It means that begin to check this client socket's fd
-				Flags: unix.EV_ADD | unix.EV_CLEAR,
+				// EV_CLEAR - means that OS will say one time about that new data has come to the socket, it will not spam
+				// EV_ONESHOT - is used to avoid race conditions
+				//              Once an event is triggered, the OS automatically suppresses any later notifications for that file descriptor.
+				//              Even if new data arrives, the poller won't wake up another thread.
+				Flags: unix.EV_ADD | unix.EV_CLEAR | unix.EV_ONESHOT,
 			},
 		}
 		// kevent/epoll_ctl - we register client socket fd in an epoll/kqueue object (it doesn't mean that we create again client socket)

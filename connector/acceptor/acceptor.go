@@ -39,7 +39,6 @@ func (a *Acceptor) Run() {
 		// accept() removes one established connection from the accept-queue
 		// and returns a new file descriptor for that client connection.
 		// This new fd is used for read/write operations with the client.
-
 		conn, err := a.listener.Accept()
 
 		if err != nil {
