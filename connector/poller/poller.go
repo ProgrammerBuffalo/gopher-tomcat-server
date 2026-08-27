@@ -59,6 +59,11 @@ func (p *Poller) Run() {
 				return
 			}
 
+			// We can get here system interruption (because of GC, OS, etc.) if our thread is still sleeping because of waiting new client actions
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+
 			fmt.Println("ERROR: ", err)
 			continue
 		}
@@ -96,7 +101,8 @@ func (p *Poller) Rearm(socketId int) {
 	events := []unix.Kevent_t{{
 		Ident:  uint64(socketId),
 		Filter: unix.EVFILT_READ,
-		Flags:  unix.EV_ENABLE | unix.EV_CLEAR | unix.EV_ONESHOT,
+		// EV_ENABLE - is used to again activate notifications for a kqueue object of a specified socket
+		Flags: unix.EV_ENABLE | unix.EV_CLEAR | unix.EV_DISPATCH,
 	}}
 	// re-enable the client socket for the next reading
 	_, err := unix.Kevent(p.kqueueId, events, nil, nil)
@@ -125,10 +131,10 @@ func (p *Poller) Register(conn *net.TCPConn) error {
 				Filter: unix.EVFILT_READ,
 				// It means that begin to check this client socket's fd
 				// EV_CLEAR - means that OS will say one time about that new data has come to the socket, it will not spam
-				// EV_ONESHOT - is used to avoid race conditions
+				// EV_DISPATCH - is used to avoid race conditions
 				//              Once an event is triggered, the OS automatically suppresses any later notifications for that file descriptor.
 				//              Even if new data arrives, the poller won't wake up another thread.
-				Flags: unix.EV_ADD | unix.EV_CLEAR | unix.EV_ONESHOT,
+				Flags: unix.EV_ADD | unix.EV_CLEAR | unix.EV_DISPATCH,
 			},
 		}
 		// kevent/epoll_ctl - we register client socket fd in an epoll/kqueue object (it doesn't mean that we create again client socket)

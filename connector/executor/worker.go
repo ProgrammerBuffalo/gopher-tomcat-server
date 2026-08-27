@@ -39,7 +39,7 @@ func (w *Worker) Run() {
 
 		// Extract socket's data that we have already read in previous cycles
 		if clientData, ok := w.pool.activeSockets.Load(socketId); ok {
-			clientData = clientData.([]byte)
+			existingBuffer = clientData.([]byte)
 		}
 
 		for {
@@ -47,12 +47,23 @@ func (w *Worker) Run() {
 			if err != nil {
 				// it means that we have read the latest bytes from the socket's buffer
 				if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
-					break
+					w.pool.activeSockets.Store(socketId, existingBuffer)
+					w.pool.rearmFunc(socketId)
+				} else {
+					fmt.Printf("Client socket disconnection %d:%v\n", socketId, err)
+					w.pool.activeSockets.Delete(socketId)
+					err = unix.Close(socketId)
+					if err != nil {
+						fmt.Println("ERROR while closing client socket: ", err)
+					}
 				}
 				w.pool.workers <- w
 				break
 			}
 			if n == 0 {
+				fmt.Printf("Client %d disconnected, no bytes read\n", socketId)
+				w.pool.activeSockets.Delete(socketId)
+				err = unix.Close(socketId)
 				w.pool.workers <- w
 				break
 			}
